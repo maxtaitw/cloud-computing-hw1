@@ -18,21 +18,18 @@ from botocore.session import Session
 # ----------------------------
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
-YELP_API_KEY = os.environ["YELP_API_KEY"]  # required
-OPENSEARCH_ENDPOINT = os.environ["OPENSEARCH_ENDPOINT"].rstrip("/")  # required, e.g. https://search-xxx.us-east-1.es.amazonaws.com
+YELP_API_KEY = os.environ["YELP_API_KEY"]
+OPENSEARCH_ENDPOINT = os.environ["OPENSEARCH_ENDPOINT"].rstrip("/")
 DDB_TABLE = os.getenv("DDB_TABLE", "yelp-restaurants")
 OS_INDEX = os.getenv("OS_INDEX", "restaurants")
 
-# cuisines to ingest: comma-separated
-# Example: mexican,japanese,korean,italian,chinese
 CUISINES = [c.strip().lower() for c in os.getenv("CUISINES", "mexican,japanese,korean,italian,chinese").split(",") if c.strip()]
 
-# Per cuisine target count (Yelp API max offset is limited; 200 is reasonable)
+# Per cuisine target count
 PER_CUISINE_TARGET = int(os.getenv("PER_CUISINE_TARGET", "200"))
 
-# Yelp search settings
 LOCATION = os.getenv("LOCATION", "Manhattan, NY")
-LIMIT = 50  # Yelp max is 50
+LIMIT = 50
 SLEEP_SEC = float(os.getenv("SLEEP_SEC", "0.2"))  # gentle throttling
 
 
@@ -56,7 +53,7 @@ def now_iso() -> str:
 def to_decimal(x):
     if x is None:
         return None
-    # 用 str 包一下避免 float 精度問題
+    # avoid Decimal(float) due to precision issues; convert via string
     return Decimal(str(x))
 
 def yelp_search(cuisine: str, offset: int) -> Dict:
@@ -99,12 +96,10 @@ def ddb_put_business(b: Dict, cuisine: str) -> None:
 
 def sign_and_request(method: str, url: str, body: bytes = b"", headers: Dict[str, str] = None) -> requests.Response:
     headers = headers or {}
-    # AWSRequest expects str body sometimes; we pass bytes and set content-type.
     req = AWSRequest(method=method, url=url, data=body, headers=headers)
     sigv4.add_auth(req)
     prepared = req.prepare()
 
-    # requests wants normal dict headers
     r = requests.request(
         method=method,
         url=prepared.url,
@@ -123,7 +118,6 @@ def opensearch_bulk(docs: List[Dict]) -> None:
     if not docs:
         return
 
-    # NDJSON bulk payload
     lines = []
     for d in docs:
         lines.append(json.dumps({"index": {"_index": OS_INDEX}}))
@@ -159,7 +153,7 @@ def opensearch_count() -> int:
 # Main ingest
 # ----------------------------
 def ingest() -> None:
-    seen_ids = set()  # global de-dupe across cuisines
+    seen_ids = set()
     total_ddb = 0
     total_os = 0
 
@@ -169,9 +163,8 @@ def ingest() -> None:
     print(f"Location={LOCATION}")
     print(f"Cuisines={CUISINES}, target per cuisine={PER_CUISINE_TARGET}")
 
-    # Bulk buffer for OpenSearch
     bulk_buf = []
-    BULK_FLUSH_EVERY = 500  # flush every N docs
+    BULK_FLUSH_EVERY = 500
 
     for cuisine in CUISINES:
         collected = 0
@@ -195,11 +188,9 @@ def ingest() -> None:
                     continue
                 seen_ids.add(bid)
 
-                # 1) DynamoDB full record
                 ddb_put_business(b, cuisine)
                 total_ddb += 1
 
-                # 2) OpenSearch minimal doc
                 bulk_buf.append({"RestaurantID": bid, "Cuisine": cuisine})
                 total_os += 1
 
@@ -213,7 +204,6 @@ def ingest() -> None:
                     print(f"Flushed {BULK_FLUSH_EVERY} to OpenSearch. total_os={total_os}")
 
             offset += LIMIT
-            # Yelp API has offset limits; keep it reasonable
             if offset >= 1000:
                 print("Reached Yelp offset limit boundary (>=1000). Stopping this cuisine.")
                 break
