@@ -8,7 +8,10 @@ LEX_BOT_ID = os.environ["LEX_BOT_ID"]
 LEX_BOT_ALIAS_ID = os.environ["LEX_BOT_ALIAS_ID"]
 LEX_LOCALE_ID = os.getenv("LEX_LOCALE_ID", "en_US")
 
+
 lex = boto3.client("lexv2-runtime", region_name=AWS_REGION)
+
+_NOTICE_SHOWN = set()
 
 def lambda_handler(event, context):
     # Parse incoming message from your starter frontend
@@ -25,7 +28,11 @@ def lambda_handler(event, context):
     if not text:
         return _resp("Please type something.")
 
-    session_id = "web-session"
+    # Use a stable Lex session id provided by the frontend
+    session_id = (body.get("sessionId") or "web-session")
+    if not isinstance(session_id, str):
+        session_id = str(session_id)
+    session_id = session_id.strip() or "web-session"
 
     r = lex.recognize_text(
         botId=LEX_BOT_ID,
@@ -45,6 +52,28 @@ def lambda_handler(event, context):
                     "type": "unstructured",
                     "unstructured": {"text": m.get("content", "")}
                 })
+
+        # Extra credit
+        # Gate on Lex being in DiningSuggestionsIntent and eliciting DiningTime
+        session_state = r.get("sessionState", {}) or {}
+        session_attrs = session_state.get("sessionAttributes") or {}
+        reused_notice = session_attrs.get("reused_notice")
+
+        intent_name = (session_state.get("intent") or {}).get("name")
+        dialog_action = session_state.get("dialogAction") or {}
+        slot_to_elicit = dialog_action.get("slotToElicit")
+
+        if (
+            reused_notice
+            and session_id not in _NOTICE_SHOWN
+            and intent_name == "DiningSuggestionsIntent"
+            and slot_to_elicit == "DiningTime"
+        ):
+            out_messages.insert(0, {
+                "type": "unstructured",
+                "unstructured": {"text": reused_notice}
+            })
+            _NOTICE_SHOWN.add(session_id)
     else:
         out_messages.append({
             "type": "unstructured",

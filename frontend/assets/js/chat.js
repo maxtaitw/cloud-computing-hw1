@@ -5,6 +5,18 @@ $(document).ready(function() {
     d, h, m,
     i = 0;
 
+  // Stable Lex session id (persists across page reloads)
+  const LEX_SESSION_KEY = 'lex_session_id';
+  let sid = localStorage.getItem(LEX_SESSION_KEY);
+  if (!sid) {
+    if (window.crypto && crypto.randomUUID) {
+      sid = crypto.randomUUID();
+    } else {
+      sid = 'sid-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    }
+    localStorage.setItem(LEX_SESSION_KEY, sid);
+  }
+
   $(window).load(function() {
     $messages.mCustomScrollbar();
     insertResponseMessage('Hi there, I\'m your personal Concierge. How can I help?');
@@ -28,6 +40,7 @@ $(document).ready(function() {
   function callChatbotApi(message) {
     // params, body, additionalParams
     return sdk.chatbotPost({}, {
+      sessionId: sid,
       messages: [{
         type: 'unstructured',
         unstructured: {
